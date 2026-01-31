@@ -17,6 +17,12 @@ export default function LoginPage() {
     setError('');
     setLoading(true);
 
+    if (!auth) {
+      setError('Firebase not initialized. Please check environment variables.');
+      setLoading(false);
+      return;
+    }
+
     try {
       await signInWithEmailAndPassword(auth, email, password);
       router.push('/admin');
