@@ -1,8 +1,7 @@
-// API Route: Register new user
+// pages/api/auth/register.js
 import { adminAuth, adminDb } from '../../../lib/firebase-admin';
 
 export default async function handler(req, res) {
-  // Enable CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
@@ -16,57 +15,91 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { email, password, displayName } = req.body;
+    const { email, password, displayName, deviceId, deviceInfo } = req.body;
 
-    if (!email || !password || !displayName) {
-      return res.status(400).json({ error: 'Missing required fields' });
+    if (!email || !password || !deviceId) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'กรุณากรอกข้อมูลให้ครบถ้วน' 
+      });
     }
 
-    // Create user in Firebase Auth
+    // Check if email already exists
+    try {
+      const existingUser = await adminAuth.getUserByEmail(email);
+      if (existingUser) {
+        return res.status(400).json({ 
+          success: false,
+          error: 'อีเมลนี้ถูกใช้งานแล้ว' 
+        });
+      }
+    } catch (e) {
+      // User not found - good
+    }
+
+    // Check if device is already registered
+    const deviceQuery = await adminDb.collection('users')
+      .where('deviceId', '==', deviceId)
+      .get();
+
+    if (!deviceQuery.empty) {
+      return res.status(400).json({
+        success: false,
+        error: 'อุปกรณ์นี้ถูกลงทะเบียนกับบัญชีอื่นแล้ว'
+      });
+    }
+
+    // Create user (disabled until admin approves)
     const userRecord = await adminAuth.createUser({
       email,
       password,
-      displayName,
+      displayName: displayName || email.split('@')[0],
+      disabled: true
     });
 
-    // Create user document in Firestore
+    // Save to Firestore
     await adminDb.collection('users').doc(userRecord.uid).set({
       uid: userRecord.uid,
-      email: userRecord.email,
-      displayName: displayName,
+      email,
+      displayName: displayName || email.split('@')[0],
+      deviceId,
+      deviceInfo: deviceInfo || {},
+      status: 'pending',
       role: 'user',
-      status: 'active',
-      subscription: {
-        plan: 'free',
-        startDate: new Date(),
-        endDate: null,
-      },
-      usage: {
-        productsCreated: 0,
-        videosGenerated: 0,
-        lastActive: new Date(),
-      },
-      createdAt: new Date(),
-      updatedAt: new Date(),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      approvedAt: null,
+      approvedBy: null,
+      lastLoginAt: null,
+      loginCount: 0
     });
 
-    // Generate custom token for auto-login
-    const customToken = await adminAuth.createCustomToken(userRecord.uid);
-
-    return res.status(201).json({
+    return res.status(200).json({
       success: true,
+      message: 'สมัครสมาชิกสำเร็จ! กรุณารอการอนุมัติจาก Admin',
+      status: 'pending',
       user: {
         uid: userRecord.uid,
-        email: userRecord.email,
-        displayName: displayName,
-      },
-      token: customToken,
+        email,
+        displayName: displayName || email.split('@')[0]
+      }
     });
+
   } catch (error) {
-    console.error('Registration error:', error);
-    return res.status(400).json({ 
-      success: false, 
-      error: error.message 
+    console.error('Register error:', error);
+    
+    let errorMessage = 'เกิดข้อผิดพลาดในการสมัครสมาชิก';
+    if (error.code === 'auth/email-already-exists') {
+      errorMessage = 'อีเมลนี้ถูกใช้งานแล้ว';
+    } else if (error.code === 'auth/invalid-email') {
+      errorMessage = 'รูปแบบอีเมลไม่ถูกต้อง';
+    } else if (error.code === 'auth/weak-password') {
+      errorMessage = 'รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร';
+    }
+
+    return res.status(500).json({ 
+      success: false,
+      error: errorMessage 
     });
   }
 }
