@@ -1,8 +1,8 @@
 // Admin Dashboard Page
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { auth, db, rtdb } from '../../lib/firebase';
 import { onAuthStateChanged } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, collection, query, where, onSnapshot } from 'firebase/firestore';
 import { ref, onValue } from 'firebase/database';
 
 export default function AdminDashboard() {
@@ -11,7 +11,7 @@ export default function AdminDashboard() {
   const [users, setUsers] = useState([]);
   const [onlineUsers, setOnlineUsers] = useState({});
   const [loading, setLoading] = useState(true);
-  const [stats, setStats] = useState({ total: 0, online: 0, active: 0 });
+  const [stats, setStats] = useState({ total: 0, online: 0, active: 0, pending: 0 });
   const [activeTab, setActiveTab] = useState('users');
   const [showAddUserModal, setShowAddUserModal] = useState(false);
   const [showNotificationModal, setShowNotificationModal] = useState(false);
@@ -21,6 +21,64 @@ export default function AdminDashboard() {
   const [notification, setNotification] = useState({ title: '', message: '', targetUsers: 'all' });
   const [actionLoading, setActionLoading] = useState(false);
   const [message, setMessage] = useState({ type: '', text: '' });
+  const [notificationPermission, setNotificationPermission] = useState(false);
+  const previousPendingCount = useRef(0);
+
+  // Request notification permission on mount
+  useEffect(() => {
+    if ('Notification' in window) {
+      Notification.requestPermission().then(permission => {
+        setNotificationPermission(permission === 'granted');
+      });
+    }
+  }, []);
+
+  // Show browser notification
+  const showBrowserNotification = (title, body) => {
+    if (notificationPermission && 'Notification' in window) {
+      const notification = new Notification(title, {
+        body,
+        icon: '🔔',
+        tag: 'new-user',
+        requireInteraction: true
+      });
+      notification.onclick = () => {
+        window.focus();
+        notification.close();
+      };
+      setTimeout(() => notification.close(), 10000);
+    }
+  };
+
+  // Listen for pending users in real-time
+  useEffect(() => {
+    if (!db || !isAdmin) return;
+    
+    const pendingQuery = query(collection(db, 'users'), where('status', '==', 'pending'));
+    const unsubscribe = onSnapshot(pendingQuery, (snapshot) => {
+      const pendingCount = snapshot.size;
+      
+      // Check if there are new pending users
+      if (pendingCount > previousPendingCount.current && previousPendingCount.current > 0) {
+        const newCount = pendingCount - previousPendingCount.current;
+        showBrowserNotification(
+          '🔔 มีผู้ใช้ใหม่รอการอนุมัติ!',
+          `มี ${newCount} คนสมัครใหม่ กรุณาตรวจสอบ`
+        );
+        // Play sound
+        try {
+          const audio = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2teleQMOTJnO3LF1Fx1Coverage');
+          audio.volume = 0.5;
+          audio.play().catch(() => {});
+        } catch (e) {}
+      }
+      
+      previousPendingCount.current = pendingCount;
+      setStats(prev => ({ ...prev, pending: pendingCount }));
+    });
+    
+    return () => unsubscribe();
+  }, [isAdmin, notificationPermission]);
 
   useEffect(() => {
     if (!auth) { setLoading(false); return; }
@@ -46,7 +104,15 @@ export default function AdminDashboard() {
       const idToken = await currentUser.getIdToken();
       const response = await fetch('/api/admin/users', { headers: { Authorization: `Bearer ${idToken}` } });
       const data = await response.json();
-      if (data.success) { setUsers(data.users); setStats(prev => ({ ...prev, total: data.total })); }
+      if (data.success) { 
+        setUsers(data.users); 
+        setStats(prev => ({ 
+          ...prev, 
+          total: data.total,
+          pending: data.users.filter(u => u.status === 'pending').length
+        }));
+        previousPendingCount.current = data.users.filter(u => u.status === 'pending').length;
+      }
     } catch (error) { console.error('Error fetching users:', error); }
   };
 
@@ -64,6 +130,7 @@ export default function AdminDashboard() {
       const idToken = await user.getIdToken();
       await fetch(`/api/admin/user/${uid}`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` }, body: JSON.stringify({ status }) });
       fetchUsers(user);
+      setMessage({ type: 'success', text: `User ${status === 'approved' ? 'approved' : status} successfully` });
     } catch (error) { console.error('Error updating user:', error); }
   };
 
@@ -155,8 +222,20 @@ export default function AdminDashboard() {
     if (activeTab === 'stats' && user) fetchStats();
   }, [activeTab, user]);
 
+  // Auto-refresh every 30 seconds
+  useEffect(() => {
+    if (!user || !isAdmin) return;
+    const interval = setInterval(() => {
+      fetchUsers(user);
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [user, isAdmin]);
+
   if (loading) return <div className="min-h-screen bg-gray-900 flex items-center justify-center"><div className="text-white text-xl">Loading...</div></div>;
   if (!user || !isAdmin) return <div className="min-h-screen bg-gray-900 flex items-center justify-center"><div className="text-center"><h1 className="text-3xl font-bold text-white mb-4">Admin Access Required</h1><a href="/login" className="bg-purple-600 text-white px-6 py-2 rounded-lg">Login</a></div></div>;
+
+  // Filter pending users
+  const pendingUsers = users.filter(u => u.status === 'pending');
 
   return (
     <div className="min-h-screen bg-gray-900 text-white">
@@ -172,22 +251,34 @@ export default function AdminDashboard() {
 
       {message.text && <div className={`fixed top-4 right-4 px-6 py-3 rounded-lg z-50 ${message.type === 'success' ? 'bg-green-600' : 'bg-red-600'}`}>{message.text}<button onClick={() => setMessage({ type: '', text: '' })} className="ml-4">×</button></div>}
 
+      {/* Pending Users Alert */}
+      {pendingUsers.length > 0 && (
+        <div className="bg-yellow-600 px-6 py-3 flex items-center justify-between">
+          <span>⏳ มี {pendingUsers.length} คนรอการอนุมัติ</span>
+          <button onClick={() => setActiveTab('pending')} className="bg-yellow-700 hover:bg-yellow-800 px-4 py-1 rounded">ดูรายชื่อ</button>
+        </div>
+      )}
+
       <div className="bg-gray-800 border-b border-gray-700 px-6">
         <nav className="flex gap-4">
-          {['users', 'stats', 'logs'].map(tab => (
+          {['users', 'pending', 'stats', 'logs'].map(tab => (
             <button key={tab} onClick={() => setActiveTab(tab)} className={`py-4 px-2 border-b-2 ${activeTab === tab ? 'border-purple-500 text-purple-400' : 'border-transparent text-gray-400'}`}>
-              {tab === 'users' && '👥 Users'}{tab === 'stats' && '📊 Statistics'}{tab === 'logs' && '📋 Logs'}
+              {tab === 'users' && '👥 Users'}
+              {tab === 'pending' && `⏳ Pending (${pendingUsers.length})`}
+              {tab === 'stats' && '📊 Statistics'}
+              {tab === 'logs' && '📋 Logs'}
             </button>
           ))}
         </nav>
       </div>
 
       <div className="p-6">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-8">
           <div className="bg-gray-800 rounded-xl p-6 border border-gray-700"><div className="text-3xl font-bold text-purple-400">{stats.total}</div><div className="text-gray-400">Total Users</div></div>
           <div className="bg-gray-800 rounded-xl p-6 border border-gray-700"><div className="text-3xl font-bold text-green-400">{stats.online}</div><div className="text-gray-400">Online Now</div></div>
+          <div className="bg-gray-800 rounded-xl p-6 border border-gray-700"><div className="text-3xl font-bold text-yellow-400">{stats.pending}</div><div className="text-gray-400">Pending</div></div>
           <div className="bg-gray-800 rounded-xl p-6 border border-gray-700"><div className="text-3xl font-bold text-blue-400">{users.filter(u => u.subscription?.plan === 'pro').length}</div><div className="text-gray-400">Pro Users</div></div>
-          <div className="bg-gray-800 rounded-xl p-6 border border-gray-700"><div className="text-3xl font-bold text-pink-400">{users.filter(u => u.status === 'active').length}</div><div className="text-gray-400">Active Users</div></div>
+          <div className="bg-gray-800 rounded-xl p-6 border border-gray-700"><div className="text-3xl font-bold text-pink-400">{users.filter(u => u.status === 'active' || u.status === 'approved').length}</div><div className="text-gray-400">Active Users</div></div>
         </div>
 
         <div className="flex gap-4 mb-6">
@@ -195,7 +286,32 @@ export default function AdminDashboard() {
           <button onClick={() => setShowNotificationModal(true)} className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg">🔔 Send Notification</button>
           <button onClick={() => exportUsers('csv')} className="bg-green-600 hover:bg-green-700 px-4 py-2 rounded-lg">📥 Export CSV</button>
           <button onClick={() => exportUsers('json')} className="bg-gray-600 hover:bg-gray-700 px-4 py-2 rounded-lg">📥 Export JSON</button>
+          <button onClick={() => fetchUsers(user)} className="bg-gray-600 hover:bg-gray-700 px-4 py-2 rounded-lg">🔄 Refresh</button>
         </div>
+
+        {/* Pending Users Tab */}
+        {activeTab === 'pending' && (
+          <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
+            <div className="px-6 py-4 border-b border-gray-700"><h2 className="text-xl font-semibold">⏳ Pending Approval ({pendingUsers.length})</h2></div>
+            <table className="w-full">
+              <thead className="bg-gray-700"><tr><th className="px-6 py-3 text-left text-xs text-gray-300">User</th><th className="px-6 py-3 text-left text-xs text-gray-300">Device ID</th><th className="px-6 py-3 text-left text-xs text-gray-300">Registered</th><th className="px-6 py-3 text-left text-xs text-gray-300">Actions</th></tr></thead>
+              <tbody className="divide-y divide-gray-700">
+                {pendingUsers.map((u) => (
+                  <tr key={u.uid}>
+                    <td className="px-6 py-4"><div className="font-medium">{u.displayName || '-'}</div><div className="text-sm text-gray-400">{u.email}</div></td>
+                    <td className="px-6 py-4"><span className="text-xs text-gray-400 font-mono">{u.deviceId?.substring(0, 16) || '-'}...</span></td>
+                    <td className="px-6 py-4 text-sm text-gray-400">{u.createdAt ? new Date(u.createdAt).toLocaleString('th-TH') : '-'}</td>
+                    <td className="px-6 py-4 flex gap-2">
+                      <button onClick={() => updateUserStatus(u.uid, 'approved')} className="bg-green-600 hover:bg-green-700 px-3 py-1 rounded text-sm">✓ Approve</button>
+                      <button onClick={() => updateUserStatus(u.uid, 'rejected')} className="bg-red-600 hover:bg-red-700 px-3 py-1 rounded text-sm">✗ Reject</button>
+                    </td>
+                  </tr>
+                ))}
+                {pendingUsers.length === 0 && <tr><td colSpan="4" className="px-6 py-8 text-center text-gray-500">No pending users</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        )}
 
         {activeTab === 'users' && (
           <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
@@ -203,10 +319,10 @@ export default function AdminDashboard() {
             <table className="w-full">
               <thead className="bg-gray-700"><tr><th className="px-6 py-3 text-left text-xs text-gray-300">User</th><th className="px-6 py-3 text-left text-xs text-gray-300">Status</th><th className="px-6 py-3 text-left text-xs text-gray-300">Plan</th><th className="px-6 py-3 text-left text-xs text-gray-300">Online</th><th className="px-6 py-3 text-left text-xs text-gray-300">Actions</th></tr></thead>
               <tbody className="divide-y divide-gray-700">
-                {users.map((u) => (
+                {users.filter(u => u.status !== 'pending').map((u) => (
                   <tr key={u.uid}>
                     <td className="px-6 py-4"><div className="font-medium">{u.displayName}</div><div className="text-sm text-gray-400">{u.email}</div></td>
-                    <td className="px-6 py-4"><select value={u.status} onChange={(e) => updateUserStatus(u.uid, e.target.value)} className="bg-gray-700 rounded px-2 py-1 text-xs"><option value="active">Active</option><option value="suspended">Suspended</option><option value="trial">Trial</option></select></td>
+                    <td className="px-6 py-4"><select value={u.status} onChange={(e) => updateUserStatus(u.uid, e.target.value)} className="bg-gray-700 rounded px-2 py-1 text-xs"><option value="active">Active</option><option value="approved">Approved</option><option value="suspended">Suspended</option><option value="trial">Trial</option></select></td>
                     <td className="px-6 py-4"><select value={u.subscription?.plan || 'free'} onChange={(e) => updateUserPlan(u.uid, e.target.value)} className="bg-gray-700 rounded px-2 py-1 text-xs"><option value="free">Free</option><option value="pro">Pro</option><option value="enterprise">Enterprise</option></select></td>
                     <td className="px-6 py-4"><span className={onlineUsers[u.uid]?.online ? 'text-green-400' : 'text-gray-500'}>{onlineUsers[u.uid]?.online ? '🟢 Online' : '⚫ Offline'}</span></td>
                     <td className="px-6 py-4"><button onClick={() => deleteUser(u.uid, u.email)} className="text-red-400 hover:text-red-300">Delete</button></td>
