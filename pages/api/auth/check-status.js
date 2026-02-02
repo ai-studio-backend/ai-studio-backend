@@ -1,6 +1,5 @@
 // pages/api/auth/check-status.js
 // API สำหรับตรวจสอบ status และ Device ID ของ user
-// ต้องเพิ่มไฟล์นี้ใน ai-studio-backend repo
 
 import { adminAuth, adminDb } from '../../../lib/firebase-admin';
 
@@ -86,7 +85,6 @@ export default async function handler(req, res) {
 
     // Check Device ID - 1 account = 1 device
     if (userData.deviceId && userData.deviceId !== deviceId) {
-      // Device mismatch - account is locked to another device
       return res.status(200).json({
         status: 'device_mismatch',
         message: 'บัญชีนี้ถูกลงทะเบียนกับอุปกรณ์อื่น',
