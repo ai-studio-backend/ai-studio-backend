@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Studio - Admin Dashboard</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      padding: 20px;
+    }
+    .container { max-width: 1200px; margin: 0 auto; }
+    .header {
+      background: white;
+      border-radius: 16px;
+      padding: 24px;
+      margin-bottom: 24px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .header h1 { font-size: 24px; color: #1e293b; display: flex; align-items: center; gap: 12px; }
+    .header h1 span {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .admin-info { display: flex; align-items: center; gap: 12px; }
+    .admin-avatar {
+      width: 40px; height: 40px; border-radius: 50%;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      display: flex; align-items: center; justify-content: center;
+      color: white; font-weight: bold;
+    }
+    .logout-btn {
+      padding: 8px 16px; background: #ef4444; color: white;
+      border: none; border-radius: 8px; cursor: pointer; font-weight: 600;
+    }
+    .logout-btn:hover { background: #dc2626; }
+    .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
+    .stat-card {
+      background: white; border-radius: 12px; padding: 20px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+    }
+    .stat-card .stat-icon { font-size: 32px; margin-bottom: 8px; }
+    .stat-card .stat-value { font-size: 32px; font-weight: 700; color: #1e293b; }
+    .stat-card .stat-label { font-size: 14px; color: #64748b; }
+    .stat-card.pending { border-left: 4px solid #f59e0b; }
+    .stat-card.approved { border-left: 4px solid #10b981; }
+    .stat-card.rejected { border-left: 4px solid #ef4444; }
+    .stat-card.total { border-left: 4px solid #6366f1; }
+    .main-content {
+      background: white; border-radius: 16px; padding: 24px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+    }
+    .tabs { display: flex; gap: 8px; margin-bottom: 24px; border-bottom: 2px solid #e2e8f0; padding-bottom: 16px; }
+    .tab-btn {
+      padding: 10px 20px; border: none; background: #f1f5f9;
+      border-radius: 8px; cursor: pointer; font-weight: 600; color: #64748b; transition: all 0.2s;
+    }
+    .tab-btn.active { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
+    .tab-btn:hover:not(.active) { background: #e2e8f0; }
+    .users-table { width: 100%; border-collapse: collapse; }
+    .users-table th, .users-table td { padding: 12px 16px; text-align: left; border-bottom: 1px solid #e2e8f0; }
+    .users-table th { background: #f8fafc; font-weight: 600; color: #475569; font-size: 13px; text-transform: uppercase; }
+    .users-table tr:hover { background: #f8fafc; }
+    .status-badge { padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; }
+    .status-badge.pending { background: #fef3c7; color: #92400e; }
+    .status-badge.approved { background: #d1fae5; color: #065f46; }
+    .status-badge.rejected { background: #fee2e2; color: #991b1b; }
+    .status-badge.suspended { background: #e2e8f0; color: #475569; }
+    .action-btn { padding: 6px 12px; border: none; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600; margin-right: 4px; }
+    .action-btn.approve { background: #10b981; color: white; }
+    .action-btn.reject { background: #ef4444; color: white; }
+    .action-btn.suspend { background: #f59e0b; color: white; }
+    .action-btn.reset { background: #6366f1; color: white; }
+    .action-btn:hover { opacity: 0.9; }
+    .device-id { font-family: monospace; font-size: 11px; color: #64748b; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .empty-state { text-align: center; padding: 60px 20px; color: #64748b; }
+    .empty-state .icon { font-size: 48px; margin-bottom: 16px; }
+    .loading { text-align: center; padding: 40px; color: #64748b; }
+    .loading .spinner { width: 40px; height: 40px; border: 4px solid #e2e8f0; border-top-color: #6366f1; border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto 16px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .refresh-btn { padding: 8px 16px; background: #6366f1; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+    .refresh-btn:hover { background: #4f46e5; }
+    .table-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+    .search-input { padding: 10px 16px; border: 2px solid #e2e8f0; border-radius: 8px; width: 300px; font-size: 14px; }
+    .search-input:focus { outline: none; border-color: #6366f1; }
+    @media (max-width: 768px) { .stats-grid { grid-template-columns: repeat(2, 1fr); } }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>🤖 <span>AI Studio</span> Admin Dashboard</h1>
+      <div class="admin-info">
+        <div class="admin-avatar">A</div>
+        <span id="adminEmail">admin@example.com</span>
+        <button class="logout-btn" onclick="logout()">ออกจากระบบ</button>
+      </div>
+    </div>
+    <div class="stats-grid">
+      <div class="stat-card pending">
+        <div class="stat-icon">⏳</div>
+        <div class="stat-value" id="pendingCount">0</div>
+        <div class="stat-label">รอการอนุมัติ</div>
+      </div>
+      <div class="stat-card approved">
+        <div class="stat-icon">✅</div>
+        <div class="stat-value" id="approvedCount">0</div>
+        <div class="stat-label">อนุมัติแล้ว</div>
+      </div>
+      <div class="stat-card rejected">
+        <div class="stat-icon">❌</div>
+        <div class="stat-value" id="rejectedCount">0</div>
+        <div class="stat-label">ถูกปฏิเสธ</div>
+      </div>
+      <div class="stat-card total">
+        <div class="stat-icon">👥</div>
+        <div class="stat-value" id="totalCount">0</div>
+        <div class="stat-label">ผู้ใช้ทั้งหมด</div>
+      </div>
+    </div>
+    <div class="main-content">
+      <div class="tabs">
+        <button class="tab-btn active" data-status="pending" onclick="filterByStatus('pending')">⏳ รอการอนุมัติ</button>
+        <button class="tab-btn" data-status="approved" onclick="filterByStatus('approved')">✅ อนุมัติแล้ว</button>
+        <button class="tab-btn" data-status="rejected" onclick="filterByStatus('rejected')">❌ ถูกปฏิเสธ</button>
+        <button class="tab-btn" data-status="all" onclick="filterByStatus('all')">👥 ทั้งหมด</button>
+      </div>
+      <div class="table-header">
+        <input type="text" class="search-input" placeholder="🔍 ค้นหาอีเมล..." oninput="searchUsers(this.value)">
+        <button class="refresh-btn" onclick="loadUsers()">🔄 รีเฟรช</button>
+      </div>
+      <div id="usersContainer">
+        <div class="loading">
+          <div class="spinner"></div>
+          <p>กำลังโหลดข้อมูล...</p>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script>
+    const API_BASE = 'https://www.aistudioai.org';
+    let allUsers = [];
+    let currentFilter = 'pending';
+    let searchQuery = '';
+    let previousPendingCount = 0;
+    let notificationPermission = false;
+
+    document.addEventListener('DOMContentLoaded', () => {
+      checkAdminAuth();
+      loadUsers();
+      requestNotificationPermission();
+      setInterval(checkForNewUsers, 30000);
+    });
+
+    async function requestNotificationPermission() {
+      if ('Notification' in window) {
+        const permission = await Notification.requestPermission();
+        notificationPermission = permission === 'granted';
+      }
+    }
+
+    function showNotification(title, body) {
+      if (notificationPermission && 'Notification' in window) {
+        const notification = new Notification(title, { body, icon: '🔔', tag: 'new-user', requireInteraction: true });
+        notification.onclick = () => { window.focus(); filterByStatus('pending'); notification.close(); };
+        setTimeout(() => notification.close(), 10000);
+      }
+    }
+
+    async function checkForNewUsers() {
+      try {
+        const token = localStorage.getItem('adminToken');
+        const response = await fetch(`${API_BASE}/api/admin/users`, { headers: { 'Authorization': `Bearer ${token}` } });
+        if (!response.ok) return;
+        const data = await response.json();
+        const newPendingCount = data.stats?.pending || 0;
+        if (newPendingCount > previousPendingCount && previousPendingCount > 0) {
+          showNotification('🔔 มีผู้ใช้ใหม่รอการอนุมัติ!', `มี ${newPendingCount - previousPendingCount} คนสมัครใหม่`);
+        }
+        previousPendingCount = newPendingCount;
+        allUsers = data.users || [];
+        document.getElementById('pendingCount').textContent = data.stats?.pending || 0;
+        document.getElementById('approvedCount').textContent = data.stats?.approved || 0;
+        document.getElementById('rejectedCount').textContent = data.stats?.rejected || 0;
+        document.getElementById('totalCount').textContent = data.stats?.total || 0;
+        renderUsers();
+      } catch (error) { console.error('Check for new users error:', error); }
+    }
+
+    async function checkAdminAuth() {
+      const token = localStorage.getItem('adminToken');
+      if (!token) { window.location.href = '/admin/login.html'; return; }
+      try {
+        const response = await fetch(`${API_BASE}/api/admin/users`, { headers: { 'Authorization': `Bearer ${token}` } });
+        if (!response.ok) throw new Error('Invalid token');
+        document.getElementById('adminEmail').textContent = localStorage.getItem('adminEmail') || 'Admin';
+      } catch (error) { console.error('Auth error:', error); }
+    }
+
+    async function loadUsers() {
+      const container = document.getElementById('usersContainer');
+      container.innerHTML = '<div class="loading"><div class="spinner"></div><p>กำลังโหลดข้อมูล...</p></div>';
+      try {
+        const token = localStorage.getItem('adminToken');
+        const response = await fetch(`${API_BASE}/api/admin/users`, { headers: { 'Authorization': `Bearer ${token}` } });
+        if (!response.ok) throw new Error('Failed to load users');
+        const data = await response.json();
+        allUsers = data.users || [];
+        document.getElementById('pendingCount').textContent = data.stats?.pending || 0;
+        document.getElementById('approvedCount').textContent = data.stats?.approved || 0;
+        document.getElementById('rejectedCount').textContent = data.stats?.rejected || 0;
+        document.getElementById('totalCount').textContent = data.stats?.total || 0;
+        previousPendingCount = data.stats?.pending || 0;
+        renderUsers();
+      } catch (error) {
+        console.error('Load users error:', error);
+        container.innerHTML = '<div class="empty-state"><div class="icon">⚠️</div><p>ไม่สามารถโหลดข้อมูลได้</p><button class="refresh-btn" onclick="loadUsers()" style="margin: 16px auto;">🔄 ลองอีกครั้ง</button></div>';
+      }
+    }
+
+    function renderUsers() {
+      const container = document.getElementById('usersContainer');
+      let filteredUsers = allUsers;
+      if (currentFilter !== 'all') filteredUsers = filteredUsers.filter(u => u.status === currentFilter);
+      if (searchQuery) {
+        const query = searchQuery.toLowerCase();
+        filteredUsers = filteredUsers.filter(u => u.email?.toLowerCase().includes(query) || u.displayName?.toLowerCase().includes(query));
+      }
+      if (filteredUsers.length === 0) {
+        container.innerHTML = '<div class="empty-state"><div class="icon">📭</div><p>ไม่พบผู้ใช้</p></div>';
+        return;
+      }
+      container.innerHTML = `
+        <table class="users-table">
+          <thead><tr><th>ผู้ใช้</th><th>Device ID</th><th>สถานะ</th><th>วันที่สมัคร</th><th>เข้าสู่ระบบล่าสุด</th><th>การดำเนินการ</th></tr></thead>
+          <tbody>${filteredUsers.map(user => `
+            <tr>
+              <td><div><strong>${user.displayName || '-'}</strong></div><div style="font-size: 12px; color: #64748b;">${user.email}</div></td>
+              <td><div class="device-id" title="${user.deviceId || '-'}">${user.deviceId || '-'}</div></td>
+              <td><span class="status-badge ${user.status}">${getStatusText(user.status)}</span></td>
+              <td style="font-size: 13px; color: #64748b;">${formatDate(user.createdAt)}</td>
+              <td style="font-size: 13px; color: #64748b;">${user.lastLoginAt ? formatDate(user.lastLoginAt) : '-'}</td>
+              <td>${getActionButtons(user)}</td>
+            </tr>
+          `).join('')}</tbody>
+        </table>`;
+    }
+
+    function getStatusText(status) {
+      const texts = { pending: 'รอการอนุมัติ', approved: 'อนุมัติแล้ว', rejected: 'ถูกปฏิเสธ', suspended: 'ถูกระงับ' };
+      return texts[status] || status;
+    }
+
+    function getActionButtons(user) {
+      let buttons = '';
+      if (user.status === 'pending') {
+        buttons += `<button class="action-btn approve" onclick="updateUser('${user.uid}', 'approve')">✓ อนุมัติ</button>`;
+        buttons += `<button class="action-btn reject" onclick="updateUser('${user.uid}', 'reject')">✗ ปฏิเสธ</button>`;
+      } else if (user.status === 'approved') {
+        buttons += `<button class="action-btn suspend" onclick="updateUser('${user.uid}', 'suspend')">⏸ ระงับ</button>`;
+        buttons += `<button class="action-btn reset" onclick="updateUser('${user.uid}', 'reset_device')">🔄 Reset Device</button>`;
+      } else if (user.status === 'suspended') {
+        buttons += `<button class="action-btn approve" onclick="updateUser('${user.uid}', 'unsuspend')">▶ ยกเลิกระงับ</button>`;
+      } else if (user.status === 'rejected') {
+        buttons += `<button class="action-btn approve" onclick="updateUser('${user.uid}', 'approve')">✓ อนุมัติ</button>`;
+      }
+      return buttons;
+    }
+
+    function formatDate(dateStr) {
+      if (!dateStr) return '-';
+      return new Date(dateStr).toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    }
+
+    function filterByStatus(status) {
+      currentFilter = status;
+      document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.status === status));
+      renderUsers();
+    }
+
+    function searchUsers(query) { searchQuery = query; renderUsers(); }
+
+    async function updateUser(uid, action) {
+      const actionTexts = { approve: 'อนุมัติ', reject: 'ปฏิเสธ', suspend: 'ระงับ', unsuspend: 'ยกเลิกระงับ', reset_device: 'Reset Device' };
+      if (!confirm(`ต้องการ${actionTexts[action]}ผู้ใช้นี้?`)) return;
+      try {
+        const token = localStorage.getItem('adminToken');
+        const response = await fetch(`${API_BASE}/api/admin/users`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+          body: JSON.stringify({ uid, action })
+        });
+        if (!response.ok) throw new Error('Failed to update user');
+        alert(`${actionTexts[action]}สำเร็จ!`);
+        loadUsers();
+      } catch (error) { console.error('Update user error:', error); alert('เกิดข้อผิดพลาด กรุณาลองอีกครั้ง'); }
+    }
+
+    function logout() { localStorage.removeItem('adminToken'); window.location.href = '/admin/login.html'; }
+  </script>
+</body>
+</html>
