@@ -1,282 +1,388 @@
-// Admin Dashboard Page
+/**
+ * 👑 AI Studio Admin Panel
+ * หน้า Dashboard สำหรับจัดการ Users
+ */
+
 import { useState, useEffect } from 'react';
-import { auth, db, rtdb } from '../../lib/firebase';
-import { onAuthStateChanged } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
-import { ref, onValue } from 'firebase/database';
+import Head from 'next/head';
 
-export default function AdminDashboard() {
-  const [user, setUser] = useState(null);
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [users, setUsers] = useState([]);
-  const [onlineUsers, setOnlineUsers] = useState({});
-  const [loading, setLoading] = useState(true);
-  const [stats, setStats] = useState({ total: 0, online: 0, active: 0 });
-  const [activeTab, setActiveTab] = useState('users');
-  const [showAddUserModal, setShowAddUserModal] = useState(false);
-  const [showNotificationModal, setShowNotificationModal] = useState(false);
-  const [logs, setLogs] = useState([]);
-  const [detailedStats, setDetailedStats] = useState(null);
-  const [newUser, setNewUser] = useState({ email: '', password: '', displayName: '', role: 'user', plan: 'free' });
-  const [notification, setNotification] = useState({ title: '', message: '', targetUsers: 'all' });
-  const [actionLoading, setActionLoading] = useState(false);
-  const [message, setMessage] = useState({ type: '', text: '' });
+// Firebase Config
+const FIREBASE_CONFIG = {
+    apiKey: "AIzaSyDpnheopanPA8ooR1KmmHILeNBPcf4TQy4",
+    projectId: "aistudio-82647"
+};
 
-  useEffect(() => {
-    if (!auth) { setLoading(false); return; }
-    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
-      if (currentUser) {
-        setUser(currentUser);
+const FIRESTORE_URL = `https://firestore.googleapis.com/v1/projects/${FIREBASE_CONFIG.projectId}/databases/(default)/documents`;
+const ADMIN_EMAIL = 'moosub@gmail.com';
+
+export default function AdminPanel() {
+    const [users, setUsers] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [filter, setFilter] = useState('all');
+    const [isAuthenticated, setIsAuthenticated] = useState(false);
+    const [adminEmail, setAdminEmail] = useState('');
+    const [adminPassword, setAdminPassword] = useState('');
+    const [loginError, setLoginError] = useState('');
+    const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
+
+    // Stats
+    const stats = {
+        total: users.length,
+        pending: users.filter(u => u.status === 'pending').length,
+        approved: users.filter(u => u.status === 'approved').length,
+        rejected: users.filter(u => u.status === 'rejected').length,
+    };
+
+    // Check auth on mount
+    useEffect(() => {
+        const savedAuth = localStorage.getItem('adminAuth');
+        if (savedAuth === 'true') {
+            setIsAuthenticated(true);
+            loadUsers();
+        } else {
+            setLoading(false);
+        }
+    }, []);
+
+    // Admin Login
+    const handleLogin = async (e) => {
+        e.preventDefault();
+        setLoginError('');
+
+        if (adminEmail.toLowerCase() !== ADMIN_EMAIL) {
+            setLoginError('คุณไม่มีสิทธิ์เข้าถึง Admin Panel');
+            return;
+        }
+
         try {
-          const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
-          if (userDoc.exists() && userDoc.data().role === 'admin') {
-            setIsAdmin(true);
-            fetchUsers(currentUser);
-            setupPresenceListener();
-          }
-        } catch (error) { console.error('Error checking admin status:', error); }
-      }
-      setLoading(false);
-    });
-    return () => unsubscribe();
-  }, []);
+            const response = await fetch(
+                `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${FIREBASE_CONFIG.apiKey}`,
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email: adminEmail, password: adminPassword, returnSecureToken: true })
+                }
+            );
+            const data = await response.json();
 
-  const fetchUsers = async (currentUser) => {
-    try {
-      const idToken = await currentUser.getIdToken();
-      const response = await fetch('/api/admin/users', { headers: { Authorization: `Bearer ${idToken}` } });
-      const data = await response.json();
-      if (data.success) { setUsers(data.users); setStats(prev => ({ ...prev, total: data.total })); }
-    } catch (error) { console.error('Error fetching users:', error); }
-  };
+            if (data.error) {
+                setLoginError('อีเมลหรือรหัสผ่านไม่ถูกต้อง');
+                return;
+            }
 
-  const setupPresenceListener = () => {
-    if (!rtdb) return;
-    const presenceRef = ref(rtdb, 'presence');
-    onValue(presenceRef, (snapshot) => {
-      const data = snapshot.val() || {};
-      setOnlineUsers(data);
-      setStats(prev => ({ ...prev, online: Object.values(data).filter(p => p.online).length }));
-    });
-  };
+            localStorage.setItem('adminAuth', 'true');
+            setIsAuthenticated(true);
+            loadUsers();
+        } catch (error) {
+            setLoginError('เกิดข้อผิดพลาด กรุณาลองใหม่');
+        }
+    };
 
-  const updateUserStatus = async (uid, status) => {
-    try {
-      const idToken = await user.getIdToken();
-      await fetch(`/api/admin/user/${uid}`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` }, body: JSON.stringify({ status }) });
-      fetchUsers(user);
-    } catch (error) { console.error('Error updating user:', error); }
-  };
+    // Logout
+    const handleLogout = () => {
+        localStorage.removeItem('adminAuth');
+        setIsAuthenticated(false);
+    };
 
-  const updateUserPlan = async (uid, plan) => {
-    try {
-      const idToken = await user.getIdToken();
-      await fetch(`/api/admin/user/${uid}`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` }, body: JSON.stringify({ subscription: { plan, startDate: new Date(), endDate: plan === 'free' ? null : new Date(Date.now() + 30*24*60*60*1000) } }) });
-      fetchUsers(user);
-    } catch (error) { console.error('Error updating plan:', error); }
-  };
+    // Load Users from Firestore
+    const loadUsers = async () => {
+        setLoading(true);
+        try {
+            const response = await fetch(`${FIRESTORE_URL}/users?key=${FIREBASE_CONFIG.apiKey}`);
+            const data = await response.json();
 
-  const deleteUser = async (uid, email) => {
-    if (!confirm(`Are you sure you want to delete user ${email}?`)) return;
-    setActionLoading(true);
-    try {
-      const idToken = await user.getIdToken();
-      const response = await fetch('/api/admin/user/delete', { method: 'DELETE', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` }, body: JSON.stringify({ uid }) });
-      const data = await response.json();
-      if (data.success) { setMessage({ type: 'success', text: 'User deleted successfully' }); fetchUsers(user); }
-      else { setMessage({ type: 'error', text: data.error }); }
-    } catch (error) { setMessage({ type: 'error', text: error.message }); }
-    setActionLoading(false);
-  };
+            if (data.documents) {
+                const parsedUsers = data.documents.map(doc => ({
+                    email: doc.fields?.email?.stringValue || '',
+                    displayName: doc.fields?.displayName?.stringValue || '',
+                    deviceId: doc.fields?.deviceId?.stringValue || '',
+                    status: doc.fields?.status?.stringValue || 'pending',
+                    createdAt: doc.fields?.createdAt?.timestampValue || '',
+                }));
+                setUsers(parsedUsers);
+            }
+        } catch (error) {
+            console.error('Error loading users:', error);
+            showToast('ไม่สามารถโหลดข้อมูลได้', 'error');
+        } finally {
+            setLoading(false);
+        }
+    };
 
-  const createUser = async (e) => {
-    e.preventDefault();
-    setActionLoading(true);
-    try {
-      const idToken = await user.getIdToken();
-      const response = await fetch('/api/admin/user/create', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` }, body: JSON.stringify(newUser) });
-      const data = await response.json();
-      if (data.success) { setMessage({ type: 'success', text: 'User created successfully' }); setShowAddUserModal(false); setNewUser({ email: '', password: '', displayName: '', role: 'user', plan: 'free' }); fetchUsers(user); }
-      else { setMessage({ type: 'error', text: data.error }); }
-    } catch (error) { setMessage({ type: 'error', text: error.message }); }
-    setActionLoading(false);
-  };
+    // Update User Status
+    const updateUserStatus = async (email, status) => {
+        try {
+            const docId = email.replace(/[.@]/g, '_');
+            await fetch(
+                `${FIRESTORE_URL}/users/${docId}?updateMask.fieldPaths=status&updateMask.fieldPaths=updatedAt&key=${FIREBASE_CONFIG.apiKey}`,
+                {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        fields: {
+                            status: { stringValue: status },
+                            updatedAt: { timestampValue: new Date().toISOString() }
+                        }
+                    })
+                }
+            );
+            showToast(`${status === 'approved' ? '✅ อนุมัติ' : '❌ ปฏิเสธ'} ${email} แล้ว`, 'success');
+            loadUsers();
+        } catch (error) {
+            showToast('เกิดข้อผิดพลาด', 'error');
+        }
+    };
 
-  const fetchLogs = async () => {
-    try {
-      const idToken = await user.getIdToken();
-      const response = await fetch('/api/admin/logs', { headers: { Authorization: `Bearer ${idToken}` } });
-      const data = await response.json();
-      if (data.success) { setLogs(data.logs); }
-    } catch (error) { console.error('Error fetching logs:', error); }
-  };
+    // Delete User
+    const deleteUser = async (email) => {
+        if (!confirm(`ลบผู้ใช้ ${email}?`)) return;
 
-  const fetchStats = async () => {
-    try {
-      const idToken = await user.getIdToken();
-      const response = await fetch('/api/admin/stats', { headers: { Authorization: `Bearer ${idToken}` } });
-      const data = await response.json();
-      if (data.success) { setDetailedStats(data.stats); }
-    } catch (error) { console.error('Error fetching stats:', error); }
-  };
+        try {
+            const docId = email.replace(/[.@]/g, '_');
+            await fetch(`${FIRESTORE_URL}/users/${docId}?key=${FIREBASE_CONFIG.apiKey}`, { method: 'DELETE' });
+            showToast(`🗑️ ลบ ${email} แล้ว`, 'success');
+            loadUsers();
+        } catch (error) {
+            showToast('เกิดข้อผิดพลาด', 'error');
+        }
+    };
 
-  const sendNotification = async (e) => {
-    e.preventDefault();
-    setActionLoading(true);
-    try {
-      const idToken = await user.getIdToken();
-      const response = await fetch('/api/admin/notification', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` }, body: JSON.stringify(notification) });
-      const data = await response.json();
-      if (data.success) { setMessage({ type: 'success', text: 'Notification sent successfully' }); setShowNotificationModal(false); setNotification({ title: '', message: '', targetUsers: 'all' }); }
-      else { setMessage({ type: 'error', text: data.error }); }
-    } catch (error) { setMessage({ type: 'error', text: error.message }); }
-    setActionLoading(false);
-  };
+    // Toast
+    const showToast = (message, type = 'success') => {
+        setToast({ show: true, message, type });
+        setTimeout(() => setToast({ show: false, message: '', type: 'success' }), 3000);
+    };
 
-  const exportUsers = async (format = 'json') => {
-    try {
-      const idToken = await user.getIdToken();
-      const response = await fetch(`/api/admin/export?format=${format}`, { headers: { Authorization: `Bearer ${idToken}` } });
-      if (format === 'csv') {
-        const blob = await response.blob();
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a'); a.href = url; a.download = 'users_export.csv'; a.click();
-      } else {
-        const data = await response.json();
-        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a'); a.href = url; a.download = 'users_export.json'; a.click();
-      }
-      setMessage({ type: 'success', text: `Exported as ${format.toUpperCase()}` });
-    } catch (error) { setMessage({ type: 'error', text: error.message }); }
-  };
+    // Filter users
+    const filteredUsers = filter === 'all' ? users : users.filter(u => u.status === filter);
 
-  useEffect(() => {
-    if (activeTab === 'logs' && user) fetchLogs();
-    if (activeTab === 'stats' && user) fetchStats();
-  }, [activeTab, user]);
+    // Format date
+    const formatDate = (dateStr) => {
+        if (!dateStr) return '-';
+        return new Date(dateStr).toLocaleDateString('th-TH', { day: '2-digit', month: 'short', year: 'numeric' });
+    };
 
-  if (loading) return <div className="min-h-screen bg-gray-900 flex items-center justify-center"><div className="text-white text-xl">Loading...</div></div>;
-  if (!user || !isAdmin) return <div className="min-h-screen bg-gray-900 flex items-center justify-center"><div className="text-center"><h1 className="text-3xl font-bold text-white mb-4">Admin Access Required</h1><a href="/login" className="bg-purple-600 text-white px-6 py-2 rounded-lg">Login</a></div></div>;
+    // Login Screen
+    if (!isAuthenticated) {
+        return (
+            <>
+                <Head>
+                    <title>Admin Login - AI Studio</title>
+                    <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet" />
+                </Head>
+                <div className="min-h-screen bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-500 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-md">
+                        <div className="text-center mb-8">
+                            <div className="text-5xl mb-4">👑</div>
+                            <h1 className="text-2xl font-bold text-gray-800">Admin Panel</h1>
+                            <p className="text-gray-500 mt-2">AI Studio User Management</p>
+                        </div>
 
-  return (
-    <div className="min-h-screen bg-gray-900 text-white">
-      <header className="bg-gray-800 border-b border-gray-700 px-6 py-4">
-        <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-bold text-purple-400">AI Studio Admin Dashboard</h1>
-          <div className="flex items-center gap-4">
-            <span className="text-gray-400">{user.email}</span>
-            <button onClick={() => auth.signOut()} className="bg-red-600 hover:bg-red-700 px-4 py-2 rounded-lg text-sm">Logout</button>
-          </div>
-        </div>
-      </header>
+                        {loginError && (
+                            <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-lg mb-4 text-sm">
+                                ⚠️ {loginError}
+                            </div>
+                        )}
 
-      {message.text && <div className={`fixed top-4 right-4 px-6 py-3 rounded-lg z-50 ${message.type === 'success' ? 'bg-green-600' : 'bg-red-600'}`}>{message.text}<button onClick={() => setMessage({ type: '', text: '' })} className="ml-4">×</button></div>}
+                        <form onSubmit={handleLogin}>
+                            <div className="mb-4">
+                                <label className="block text-gray-700 font-semibold mb-2">อีเมล</label>
+                                <input
+                                    type="email"
+                                    value={adminEmail}
+                                    onChange={(e) => setAdminEmail(e.target.value)}
+                                    className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition"
+                                    placeholder="admin@email.com"
+                                    required
+                                />
+                            </div>
+                            <div className="mb-6">
+                                <label className="block text-gray-700 font-semibold mb-2">รหัสผ่าน</label>
+                                <input
+                                    type="password"
+                                    value={adminPassword}
+                                    onChange={(e) => setAdminPassword(e.target.value)}
+                                    className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition"
+                                    placeholder="••••••••"
+                                    required
+                                />
+                            </div>
+                            <button
+                                type="submit"
+                                className="w-full bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-bold py-3 rounded-xl hover:opacity-90 transition-opacity"
+                            >
+                                เข้าสู่ระบบ
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </>
+        );
+    }
 
-      <div className="bg-gray-800 border-b border-gray-700 px-6">
-        <nav className="flex gap-4">
-          {['users', 'stats', 'logs'].map(tab => (
-            <button key={tab} onClick={() => setActiveTab(tab)} className={`py-4 px-2 border-b-2 ${activeTab === tab ? 'border-purple-500 text-purple-400' : 'border-transparent text-gray-400'}`}>
-              {tab === 'users' && '👥 Users'}{tab === 'stats' && '📊 Statistics'}{tab === 'logs' && '📋 Logs'}
-            </button>
-          ))}
-        </nav>
-      </div>
+    // Main Admin Panel
+    return (
+        <>
+            <Head>
+                <title>Admin Panel - AI Studio</title>
+                <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet" />
+            </Head>
 
-      <div className="p-6">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-          <div className="bg-gray-800 rounded-xl p-6 border border-gray-700"><div className="text-3xl font-bold text-purple-400">{stats.total}</div><div className="text-gray-400">Total Users</div></div>
-          <div className="bg-gray-800 rounded-xl p-6 border border-gray-700"><div className="text-3xl font-bold text-green-400">{stats.online}</div><div className="text-gray-400">Online Now</div></div>
-          <div className="bg-gray-800 rounded-xl p-6 border border-gray-700"><div className="text-3xl font-bold text-blue-400">{users.filter(u => u.subscription?.plan === 'pro').length}</div><div className="text-gray-400">Pro Users</div></div>
-          <div className="bg-gray-800 rounded-xl p-6 border border-gray-700"><div className="text-3xl font-bold text-pink-400">{users.filter(u => u.status === 'active').length}</div><div className="text-gray-400">Active Users</div></div>
-        </div>
+            <div className="min-h-screen bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-500 p-6 font-[Nunito]">
+                {/* Header */}
+                <header className="bg-white rounded-2xl shadow-lg p-6 mb-6 flex justify-between items-center">
+                    <div className="flex items-center gap-4">
+                        <span className="text-4xl">👑</span>
+                        <div>
+                            <h1 className="text-2xl font-bold text-gray-800">Admin Panel</h1>
+                            <p className="text-gray-500">จัดการผู้ใช้ AI Studio</p>
+                        </div>
+                    </div>
+                    <div className="flex gap-3">
+                        <button
+                            onClick={loadUsers}
+                            className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold rounded-xl transition"
+                        >
+                            🔄 รีเฟรช
+                        </button>
+                        <button
+                            onClick={handleLogout}
+                            className="px-4 py-2 bg-red-500 hover:bg-red-600 text-white font-semibold rounded-xl transition"
+                        >
+                            🚪 ออก
+                        </button>
+                    </div>
+                </header>
 
-        <div className="flex flex-wrap gap-4 mb-6">
-          <button onClick={() => setShowAddUserModal(true)} className="bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded-lg">➕ Add User</button>
-          <button onClick={() => setShowNotificationModal(true)} className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg">🔔 Send Notification</button>
-          <button onClick={() => exportUsers('csv')} className="bg-green-600 hover:bg-green-700 px-4 py-2 rounded-lg">📥 Export CSV</button>
-          <button onClick={() => exportUsers('json')} className="bg-gray-600 hover:bg-gray-700 px-4 py-2 rounded-lg">📥 Export JSON</button>
-        </div>
+                {/* Stats */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                    <div className="bg-white rounded-2xl shadow-lg p-6 text-center">
+                        <div className="text-4xl font-bold text-gray-800">{stats.total}</div>
+                        <div className="text-gray-500 mt-1">ทั้งหมด</div>
+                    </div>
+                    <div className="bg-white rounded-2xl shadow-lg p-6 text-center">
+                        <div className="text-4xl font-bold text-amber-500">{stats.pending}</div>
+                        <div className="text-gray-500 mt-1">รออนุมัติ</div>
+                    </div>
+                    <div className="bg-white rounded-2xl shadow-lg p-6 text-center">
+                        <div className="text-4xl font-bold text-emerald-500">{stats.approved}</div>
+                        <div className="text-gray-500 mt-1">อนุมัติแล้ว</div>
+                    </div>
+                    <div className="bg-white rounded-2xl shadow-lg p-6 text-center">
+                        <div className="text-4xl font-bold text-red-500">{stats.rejected}</div>
+                        <div className="text-gray-500 mt-1">ถูกปฏิเสธ</div>
+                    </div>
+                </div>
 
-        {activeTab === 'users' && (
-          <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
-            <div className="px-6 py-4 border-b border-gray-700"><h2 className="text-xl font-semibold">👥 User Management</h2></div>
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead className="bg-gray-700"><tr><th className="px-6 py-3 text-left text-xs text-gray-300">User</th><th className="px-6 py-3 text-left text-xs text-gray-300">Status</th><th className="px-6 py-3 text-left text-xs text-gray-300">Plan</th><th className="px-6 py-3 text-left text-xs text-gray-300">Online</th><th className="px-6 py-3 text-left text-xs text-gray-300">Actions</th></tr></thead>
-                <tbody className="divide-y divide-gray-700">
-                  {users.map((u) => (
-                    <tr key={u.uid}>
-                      <td className="px-6 py-4"><div className="font-medium">{u.displayName || 'No Name'}</div><div className="text-sm text-gray-400">{u.email}</div></td>
-                      <td className="px-6 py-4"><select value={u.status || 'active'} onChange={(e) => updateUserStatus(u.uid, e.target.value)} className="bg-gray-700 rounded px-2 py-1 text-xs"><option value="active">Active</option><option value="suspended">Suspended</option><option value="trial">Trial</option></select></td>
-                      <td className="px-6 py-4"><select value={u.subscription?.plan || 'free'} onChange={(e) => updateUserPlan(u.uid, e.target.value)} className="bg-gray-700 rounded px-2 py-1 text-xs"><option value="free">Free</option><option value="pro">Pro</option><option value="enterprise">Enterprise</option></select></td>
-                      <td className="px-6 py-4"><span className={onlineUsers[u.uid]?.online ? 'text-green-400' : 'text-gray-500'}>{onlineUsers[u.uid]?.online ? '🟢 Online' : '⚫ Offline'}</span></td>
-                      <td className="px-6 py-4"><button onClick={() => deleteUser(u.uid, u.email)} disabled={actionLoading} className="text-red-400 hover:text-red-300 disabled:opacity-50">Delete</button></td>
-                    </tr>
-                  ))}
-                  {users.length === 0 && <tr><td colSpan="5" className="px-6 py-8 text-center text-gray-500">No users found</td></tr>}
-                </tbody>
-              </table>
+                {/* Filter Tabs */}
+                <div className="flex gap-2 mb-4 flex-wrap">
+                    {['all', 'pending', 'approved', 'rejected'].map((f) => (
+                        <button
+                            key={f}
+                            onClick={() => setFilter(f)}
+                            className={`px-4 py-2 rounded-full font-semibold transition ${filter === f
+                                    ? 'bg-white text-gray-800 shadow'
+                                    : 'bg-white/20 text-white hover:bg-white/30'
+                                }`}
+                        >
+                            {f === 'all' && 'ทั้งหมด'}
+                            {f === 'pending' && '🕐 รออนุมัติ'}
+                            {f === 'approved' && '✅ อนุมัติแล้ว'}
+                            {f === 'rejected' && '❌ ถูกปฏิเสธ'}
+                        </button>
+                    ))}
+                </div>
+
+                {/* Users Table */}
+                <div className="bg-white rounded-2xl shadow-lg overflow-hidden">
+                    {loading ? (
+                        <div className="p-12 text-center">
+                            <div className="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                            <p className="text-gray-500">กำลังโหลด...</p>
+                        </div>
+                    ) : filteredUsers.length === 0 ? (
+                        <div className="p-12 text-center">
+                            <div className="text-5xl mb-4">👥</div>
+                            <p className="text-gray-500">ไม่มีผู้ใช้</p>
+                        </div>
+                    ) : (
+                        <div className="overflow-x-auto">
+                            <table className="w-full">
+                                <thead className="bg-gray-50 border-b">
+                                    <tr>
+                                        <th className="px-6 py-4 text-left font-bold text-gray-700">อีเมล</th>
+                                        <th className="px-6 py-4 text-left font-bold text-gray-700">ชื่อ</th>
+                                        <th className="px-6 py-4 text-left font-bold text-gray-700">สถานะ</th>
+                                        <th className="px-6 py-4 text-left font-bold text-gray-700">วันที่สมัคร</th>
+                                        <th className="px-6 py-4 text-left font-bold text-gray-700">การดำเนินการ</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {filteredUsers.map((user, i) => (
+                                        <tr key={i} className="border-b hover:bg-gray-50 transition">
+                                            <td className="px-6 py-4 text-gray-800 font-medium">{user.email}</td>
+                                            <td className="px-6 py-4 text-gray-600">{user.displayName || '-'}</td>
+                                            <td className="px-6 py-4">
+                                                <span className={`px-3 py-1 rounded-full text-sm font-semibold ${user.status === 'approved' ? 'bg-emerald-100 text-emerald-700' :
+                                                        user.status === 'rejected' ? 'bg-red-100 text-red-700' :
+                                                            'bg-amber-100 text-amber-700'
+                                                    }`}>
+                                                    {user.status === 'approved' && '✅ อนุมัติแล้ว'}
+                                                    {user.status === 'rejected' && '❌ ถูกปฏิเสธ'}
+                                                    {user.status === 'pending' && '🕐 รออนุมัติ'}
+                                                </span>
+                                            </td>
+                                            <td className="px-6 py-4 text-gray-500">{formatDate(user.createdAt)}</td>
+                                            <td className="px-6 py-4">
+                                                <div className="flex gap-2">
+                                                    {user.status !== 'approved' && (
+                                                        <button
+                                                            onClick={() => updateUserStatus(user.email, 'approved')}
+                                                            className="px-3 py-1 bg-emerald-500 hover:bg-emerald-600 text-white text-sm font-semibold rounded-lg transition"
+                                                        >
+                                                            ✅ อนุมัติ
+                                                        </button>
+                                                    )}
+                                                    {user.status !== 'rejected' && (
+                                                        <button
+                                                            onClick={() => updateUserStatus(user.email, 'rejected')}
+                                                            className="px-3 py-1 bg-red-500 hover:bg-red-600 text-white text-sm font-semibold rounded-lg transition"
+                                                        >
+                                                            ❌ ปฏิเสธ
+                                                        </button>
+                                                    )}
+                                                    <button
+                                                        onClick={() => deleteUser(user.email)}
+                                                        className="px-3 py-1 bg-gray-200 hover:bg-gray-300 text-gray-700 text-sm font-semibold rounded-lg transition"
+                                                    >
+                                                        🗑️
+                                                    </button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
+                </div>
+
+                {/* Toast */}
+                {toast.show && (
+                    <div className={`fixed bottom-6 right-6 px-6 py-4 rounded-xl shadow-lg font-semibold text-white ${toast.type === 'success' ? 'bg-gray-800' : 'bg-red-500'
+                        } animate-slide-in`}>
+                        {toast.message}
+                    </div>
+                )}
             </div>
-          </div>
-        )}
 
-        {activeTab === 'stats' && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {detailedStats ? (
-              <>
-                <div className="bg-gray-800 rounded-xl border border-gray-700 p-6"><h3 className="text-lg font-semibold mb-4">📊 User Statistics</h3><div className="space-y-3"><div className="flex justify-between"><span className="text-gray-400">Total</span><span>{detailedStats.users.total}</span></div><div className="flex justify-between"><span className="text-gray-400">Active</span><span className="text-green-400">{detailedStats.users.active}</span></div><div className="flex justify-between"><span className="text-gray-400">Suspended</span><span className="text-red-400">{detailedStats.users.suspended}</span></div><div className="flex justify-between"><span className="text-gray-400">Trial</span><span className="text-yellow-400">{detailedStats.users.trial}</span></div></div></div>
-                <div className="bg-gray-800 rounded-xl border border-gray-700 p-6"><h3 className="text-lg font-semibold mb-4">💎 Plan Distribution</h3><div className="space-y-3"><div className="flex justify-between"><span className="text-gray-400">Free</span><span>{detailedStats.plans.free}</span></div><div className="flex justify-between"><span className="text-gray-400">Pro</span><span className="text-purple-400">{detailedStats.plans.pro}</span></div><div className="flex justify-between"><span className="text-gray-400">Enterprise</span><span className="text-blue-400">{detailedStats.plans.enterprise}</span></div></div></div>
-              </>
-            ) : (
-              <div className="col-span-2 text-center py-8 text-gray-500">Loading statistics...</div>
-            )}
-          </div>
-        )}
-
-        {activeTab === 'logs' && (
-          <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
-            <div className="px-6 py-4 border-b border-gray-700"><h2 className="text-xl font-semibold">📋 Admin Logs</h2></div>
-            <div className="overflow-x-auto">
-              <table className="w-full"><thead className="bg-gray-700"><tr><th className="px-6 py-3 text-left text-xs text-gray-300">Action</th><th className="px-6 py-3 text-left text-xs text-gray-300">Target</th><th className="px-6 py-3 text-left text-xs text-gray-300">Time</th></tr></thead>
-                <tbody className="divide-y divide-gray-700">{logs.map((log) => (<tr key={log.id}><td className="px-6 py-4"><span className={`px-2 py-1 rounded text-xs ${log.action === 'delete_user' ? 'bg-red-900 text-red-300' : log.action === 'create_user' ? 'bg-green-900 text-green-300' : 'bg-blue-900 text-blue-300'}`}>{log.action}</span></td><td className="px-6 py-4 text-gray-400">{log.targetEmail || log.targetUid || '-'}</td><td className="px-6 py-4 text-gray-400">{log.timestamp ? new Date(log.timestamp).toLocaleString('th-TH') : '-'}</td></tr>))}{logs.length === 0 && <tr><td colSpan="3" className="px-6 py-8 text-center text-gray-500">No logs found</td></tr>}</tbody>
-              </table>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {showAddUserModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-gray-800 rounded-xl p-6 w-full max-w-md border border-gray-700">
-            <h3 className="text-xl font-semibold mb-4">➕ Add New User</h3>
-            <form onSubmit={createUser} className="space-y-4">
-              <div><label className="block text-sm text-gray-400 mb-1">Email</label><input type="email" value={newUser.email} onChange={(e) => setNewUser({...newUser, email: e.target.value})} className="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2" required /></div>
-              <div><label className="block text-sm text-gray-400 mb-1">Password</label><input type="password" value={newUser.password} onChange={(e) => setNewUser({...newUser, password: e.target.value})} className="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2" required /></div>
-              <div><label className="block text-sm text-gray-400 mb-1">Display Name</label><input type="text" value={newUser.displayName} onChange={(e) => setNewUser({...newUser, displayName: e.target.value})} className="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2" /></div>
-              <div className="grid grid-cols-2 gap-4">
-                <div><label className="block text-sm text-gray-400 mb-1">Role</label><select value={newUser.role} onChange={(e) => setNewUser({...newUser, role: e.target.value})} className="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2"><option value="user">User</option><option value="admin">Admin</option></select></div>
-                <div><label className="block text-sm text-gray-400 mb-1">Plan</label><select value={newUser.plan} onChange={(e) => setNewUser({...newUser, plan: e.target.value})} className="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2"><option value="free">Free</option><option value="pro">Pro</option><option value="enterprise">Enterprise</option></select></div>
-              </div>
-              <div className="flex gap-4 pt-4"><button type="button" onClick={() => setShowAddUserModal(false)} className="flex-1 bg-gray-700 py-2 rounded-lg">Cancel</button><button type="submit" disabled={actionLoading} className="flex-1 bg-purple-600 py-2 rounded-lg disabled:opacity-50">{actionLoading ? 'Creating...' : 'Create'}</button></div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {showNotificationModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-gray-800 rounded-xl p-6 w-full max-w-md border border-gray-700">
-            <h3 className="text-xl font-semibold mb-4">🔔 Send Notification</h3>
-            <form onSubmit={sendNotification} className="space-y-4">
-              <div><label className="block text-sm text-gray-400 mb-1">Title</label><input type="text" value={notification.title} onChange={(e) => setNotification({...notification, title: e.target.value})} className="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2" required /></div>
-              <div><label className="block text-sm text-gray-400 mb-1">Message</label><textarea value={notification.message} onChange={(e) => setNotification({...notification, message: e.target.value})} className="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 h-24" required /></div>
-              <div><label className="block text-sm text-gray-400 mb-1">Target</label><select value={notification.targetUsers} onChange={(e) => setNotification({...notification, targetUsers: e.target.value})} className="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2"><option value="all">All Users</option><option value="active">Active Only</option><option value="pro">Pro Only</option></select></div>
-              <div className="flex gap-4 pt-4"><button type="button" onClick={() => setShowNotificationModal(false)} className="flex-1 bg-gray-700 py-2 rounded-lg">Cancel</button><button type="submit" disabled={actionLoading} className="flex-1 bg-blue-600 py-2 rounded-lg disabled:opacity-50">{actionLoading ? 'Sending...' : 'Send'}</button></div>
-            </form>
-          </div>
-        </div>
-      )}
-    </div>
-  );
+            <style jsx>{`
+        @keyframes slide-in {
+          from { transform: translateX(100%); opacity: 0; }
+          to { transform: translateX(0); opacity: 1; }
+        }
+        .animate-slide-in { animation: slide-in 0.3s ease; }
+      `}</style>
+        </>
+    );
 }
