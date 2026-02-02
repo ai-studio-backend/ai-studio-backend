@@ -99,23 +99,22 @@ export default function AdminDashboard() {
     return () => unsubscribe();
   }, []);
 
-  const fetchUsers = async (currentUser) => {
-    try {
-      const idToken = await currentUser.getIdToken();
-      const response = await fetch('/api/admin/users', { headers: { Authorization: `Bearer ${idToken}` } });
-      const data = await response.json();
-      if (data.success) { 
-        setUsers(data.users); 
-        setStats(prev => ({ 
-          ...prev, 
-          total: data.total,
-          pending: data.users.filter(u => u.status === 'pending').length
-        }));
-        previousPendingCount.current = data.users.filter(u => u.status === 'pending').length;
-      }
-    } catch (error) { console.error('Error fetching users:', error); }
-  };
-
+ const fetchUsers = async (currentUser) => {
+  try {
+    const idToken = await currentUser.getIdToken();
+    const response = await fetch('/api/admin/users', { headers: { Authorization: `Bearer ${idToken}` } });
+    const data = await response.json();
+    if (data.users) { 
+      setUsers(data.users); 
+      setStats(prev => ({ 
+        ...prev, 
+        total: data.stats?.total || data.users.length,
+        pending: data.stats?.pending || data.users.filter(u => u.status === 'pending').length
+      }));
+      previousPendingCount.current = data.stats?.pending || data.users.filter(u => u.status === 'pending').length;
+    }
+  } catch (error) { console.error('Error fetching users:', error); }
+};
   const setupPresenceListener = () => {
     const presenceRef = ref(rtdb, 'presence');
     onValue(presenceRef, (snapshot) => {
