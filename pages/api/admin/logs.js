@@ -1,62 +1,81 @@
-// API Route: Admin - Get admin logs
+// pages/api/admin/login.js
+// API สำหรับ Admin เข้าสู่ระบบ Dashboard
+
 import { adminAuth, adminDb } from '../../../lib/firebase-admin';
 
 export default async function handler(req, res) {
+  // CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
 
-  if (req.method !== 'GET') {
+  if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
   try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ error: 'Missing authorization header' });
-    }
+    const { email, password } = req.body;
 
-    const idToken = authHeader.split('Bearer ')[1];
-    const decodedToken = await adminAuth.verifyIdToken(idToken);
-    const adminUid = decodedToken.uid;
-
-    const adminDoc = await adminDb.collection('users').doc(adminUid).get();
-    if (!adminDoc.exists || adminDoc.data().role !== 'admin') {
-      return res.status(403).json({ error: 'Admin access required' });
-    }
-
-    const { limit: queryLimit = 50 } = req.query;
-
-    const logsSnapshot = await adminDb.collection('admin_logs')
-      .orderBy('timestamp', 'desc')
-      .limit(parseInt(queryLimit))
-      .get();
-
-    const logs = [];
-    logsSnapshot.forEach(doc => {
-      const data = doc.data();
-      logs.push({
-        id: doc.id,
-        action: data.action,
-        targetUid: data.targetUid,
-        targetEmail: data.targetEmail,
-        adminUid: data.adminUid,
-        details: data.details,
-        timestamp: data.timestamp?.toDate(),
+    if (!email || !password) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'กรุณากรอกอีเมลและรหัสผ่าน' 
       });
-    });
+    }
+
+    // ใช้ Firebase Auth REST API เพื่อ verify credentials
+    const FIREBASE_API_KEY = process.env.FIREBASE_API_KEY;
+    
+    const authResponse = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${FIREBASE_API_KEY}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email,
+          password,
+          returnSecureToken: true
+        })
+      }
+    );
+
+    const authData = await authResponse.json();
+
+    if (!authResponse.ok || authData.error) {
+      return res.status(401).json({ 
+        success: false, 
+        error: 'อีเมลหรือรหัสผ่านไม่ถูกต้อง' 
+      });
+    }
+
+    // ตรวจสอบว่าเป็น Admin หรือไม่ (จาก Firestore)
+    const userDoc = await adminDb.collection('users').doc(authData.localId).get();
+    if (!userDoc.exists || userDoc.data().role !== 'admin') {
+      return res.status(403).json({ 
+        success: false, 
+        error: 'คุณไม่มีสิทธิ์เข้าถึง Admin Dashboard' 
+      });
+    }
+
+    // Log admin login
+    console.log(`[Admin Login] ${email} logged in at ${new Date().toISOString()}`);
 
     return res.status(200).json({
       success: true,
-      logs,
-      total: logs.length,
+      token: authData.idToken,
+      email: email,
+      expiresIn: authData.expiresIn
     });
+
   } catch (error) {
-    console.error('Logs error:', error);
-    return res.status(500).json({ error: error.message });
+    console.error('Admin login error:', error);
+    return res.status(500).json({ 
+      success: false, 
+      error: 'เกิดข้อผิดพลาด กรุณาลองอีกครั้ง' 
+    });
   }
 }
